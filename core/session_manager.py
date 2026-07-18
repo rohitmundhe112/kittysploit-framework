@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import json
+import time
+import uuid
+from typing import Dict, List, Optional, Any
+from core.session import Session, SessionData
+from core.output_handler import print_error
+from core.models.models import Session as DBSession
+from core.utils.paths import sound_notify_path
+from datetime import datetime
+
+def _make_json_serializable(obj):
+    """
+    Recursively filter out non-JSON-serializable objects from a data structure.
+    Replaces them with string representations or removes them.
+    """
+    if obj is None:
+        return None
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, dict):
+        result = {}
+        for key, value in obj.items():
+            try:
+                # Try to serialize the value to check if it's serializable
+                json.dumps(value)
+                result[key] = _make_json_serializable(value)
+            except (TypeError, ValueError):
+                # If not serializable, replace with string representation or skip
+                # Skip connection objects and other non-serializable objects
+                if hasattr(value, '__class__'):
+                    class_name = value.__class__.__name__
+                    # For connection objects, store metadata instead
+                    if class_name in ['FTP', 'socket', 'SSHClient', 'paramiko.SSHClient']:
+                        # Store connection metadata instead of the object
+                        result[key] = {
+                            '_type': 'connection',
+                            '_class': class_name,
+                            '_repr': str(value)
+                        }
+                    else:
+                        # For other non-serializable objects, try to store a string representation
+                        try:
+                            result[key] = str(value)
+                        except:
+                            # If even str() fails, skip it
+                            pass
+                else:
+                    # For other types, try string representation
+                    try:
+                        result[key] = str(value)
+                    except:
+                        pass
+        return result
+    elif isinstance(obj, (list, tuple)):
+        result = []
+        for item in obj:
+            try:
+                json.dumps(item)
+                result.append(_make_json_serializable(item))
+            except (TypeError, ValueError):
+                # Skip non-serializable items in lists
+                if hasattr(item, '__class__'):
+                    class_name = item.__class__.__name__
+                    if class_name in ['FTP', 'socket', 'SSHClient', 'paramiko.SSHClient']:
+                        result.append({
+                            '_type': 'connection',
+                            '_class': class_name,
+                            '_repr': str(item)
+                        })
+                    else:
+                        try:
+                            result.append(str(item))
+                        except:
+                            pass
+                else:
+                    try:
+                        result.append(str(item))
+                    except:
+                        pass
+        return result
+    else:
+        # For other types, try to convert to string
+        try:
+            return str(obj)
+        except:
+            return None
+
+class SessionManager:
+    
+    def __init__(self, sessions_dir: Optional[str] = None, clean_startup: bool = True, db_manager=None, framework=None):
+        """
+        Initialize SessionManager.
+        
+        Args:
+            sessions_dir: Deprecated - no longer used (sessions are stored in database)
+            clean_startup: If True, don't load old sessions from database on startup
+            db_manager: Database manager instance
+            framework: Framework instance
+        """
+        self.sessions: Dict[str, SessionData] = {}
+        self.browser_sessions: Dict[str, Dict[str, Any]] = {}
+        self.callbacks = []
+        self._session_metadata: Dict[str, Dict[str, Any]] = {}
+        self.db_manager = db_manager
+        self.framework = framework
+        self.clean_startup = clean_startup
+        
+        # Load sessions from database on startup (only if clean_startup is False)
+        if not clean_startup:
+            self._load_sessions_from_db()
+    
+    def _get_workspace_id(self) -> Optional[int]:
+        """Return the current workspace ID from the framework, if available."""
+        if not self.framework:
+            return None
+        try:
+            workspace_manager = getattr(self.framework, 'workspace_manager', None)
+            if workspace_manager:
+                current_workspace = workspace_manager.get_current_workspace()
+                if current_workspace:
+                    return current_workspace.id
+        except Exception:
+            pass
+        return None
+
+    def _get_db_session(self):
+        if self.framework and hasattr(self.framework, 'get_db_session'):
+            return self.framework.get_db_session()
+        if self.db_manager:
+            return self.db_manager.get_session("default")
+        return None
+
+    def reload_for_current_workspace(self) -> None:
+        self.sessions.clear()
+        self.browser_sessions.clear()
+        self._session_metadata.clear()
+        self._load_sessions_from_db()
+    
+    def _sync_session_to_db(self, session_id: str, session_data: SessionData) -> bool:
+        """Sync a session to the database"""
+        if not self.db_manager:
+            return False
+        
+        try:
+            db_session = self._get_db_session()
+            if not db_session:
+                return False
+
+            workspace_id = self._get_workspace_id()
+                
+            # Check if session already exists in DB
+            existing_db_session = db_session.query(DBSession).filter_by(session_id=session_id).first()
+            
+            # Filter out non-serializable objects from session data
+            serializable_data = _make_json_serializable(session_data.data)
+            
+            if existing_db_session:
+                # Update existing session
+                existing_db_session.session_type = session_data.session_type
+                existing_db_session.target_host = session_data.host
+                existing_db_session.target_port = session_data.port
+                existing_db_session.session_data = json.dumps(serializable_data)
+                existing_db_session.last_seen = datetime.utcnow()
+                existing_db_session.is_active = True
+                if workspace_id is not None:
+                    existing_db_session.workspace_id = workspace_id
+            else:
+                # Create new session in DB
+                db_session_obj = DBSession(
+                    session_id=session_id,
+                    session_type=session_data.session_type,
+                    target_host=session_data.host,
+                    target_port=session_data.port,
+                    session_data=json.dumps(serializable_data),
+                    created_at=datetime.utcnow(),
+                    last_seen=datetime.utcnow(),
+                    is_active=True,
+                    workspace_id=workspace_id,
+                )
+                db_session.add(db_session_obj)
+            
+            db_session.commit()
+            return True
+        except Exception as e:
+            print_error(f"Error syncing session {session_id} to database: {e}")
+            return False
+    
+    def _sync_browser_session_to_db(self, session_id: str, browser_session: Dict[str, Any]) -> bool:
+        """Sync a browser session to the database"""
+        if not self.db_manager:
+            return False
+        
+        try:
+            db_session = self._get_db_session()
+            if not db_session:
+                return False
+
+            workspace_id = self._get_workspace_id()
+                
+            # Check if session already exists in DB
+            existing_db_session = db_session.query(DBSession).filter_by(session_id=session_id).first()
+            
+            session_info = browser_session.get('info', {})
+            session_data = {
+                'commands_executed': browser_session.get('commands_executed', 0),
+                'commands_sent': browser_session.get('commands_sent', 0),
+                'first_seen': browser_session.get('first_seen'),
+                'last_seen': browser_session.get('last_seen'),
+                'active': browser_session.get('active', True)
+            }
+            
+            if existing_db_session:
+                # Update existing session
+                existing_db_session.session_type = 'browser'
+                existing_db_session.session_data = json.dumps(session_data)
+                existing_db_session.session_info = json.dumps(session_info)
+                existing_db_session.last_seen = datetime.utcnow()
+                existing_db_session.is_active = browser_session.get('active', True)
+                if workspace_id is not None:
+                    existing_db_session.workspace_id = workspace_id
+            else:
+                # Create new session in DB
+                db_session_obj = DBSession(
+                    session_id=session_id,
+                    session_type='browser',
+                    session_data=json.dumps(session_data),
+                    session_info=json.dumps(session_info),
+                    created_at=datetime.utcnow(),
+                    last_seen=datetime.utcnow(),
+                    is_active=browser_session.get('active', True),
+                    workspace_id=workspace_id,
+                )
+                db_session.add(db_session_obj)
+            
+            db_session.commit()
+            return True
+        except Exception as e:
+            print_error(f"Error syncing browser session {session_id} to database: {e}")
+            return False
+    
+    def _load_sessions_from_db(self) -> None:
+        """Load sessions from database on startup"""
+        if not self.db_manager:
+            return
+        
+        try:
+            db_session = self._get_db_session()
+            if not db_session:
+                return
+            
+            # Only load sessions that are active and recent (created in last 7 days)
+            from datetime import datetime, timedelta
+            cutoff_date = datetime.utcnow() - timedelta(days=7)
+
+            workspace_id = self._get_workspace_id()
+            query = db_session.query(DBSession).filter(
+                DBSession.is_active == True,
+                DBSession.created_at >= cutoff_date
+            )
+            if workspace_id is not None:
+                query = query.filter(DBSession.workspace_id == workspace_id)
+
+            db_sessions = query.all()
+            
+            for db_session_obj in db_sessions:
+                session_id = db_session_obj.session_id
+                
+                # Store metadata for session
+                self._session_metadata[session_id] = {
+                    "created_at": db_session_obj.created_at.timestamp() if db_session_obj.created_at else time.time(),
+                    "category": "browser" if db_session_obj.session_type == 'browser' else "standard"
+                }
+                
+                if db_session_obj.session_type == 'browser':
+                    # Load browser session
+                    # Safely parse JSON, handling empty or invalid strings
+                    session_data_str = (db_session_obj.session_data or '').strip()
+                    session_info_str = (db_session_obj.session_info or '').strip()
+                    
+                    try:
+                        session_data = json.loads(session_data_str) if session_data_str else {}
+                    except (json.JSONDecodeError, ValueError):
+                        session_data = {}
+                    
+                    try:
+                        session_info = json.loads(session_info_str) if session_info_str else {}
+                    except (json.JSONDecodeError, ValueError):
+                        session_info = {}
+                    
+                    self.browser_sessions[session_id] = {
+                        'id': session_id,
+                        'type': 'browser',
+                        'info': session_info,
+                        'first_seen': session_data.get('first_seen', db_session_obj.created_at.timestamp() if db_session_obj.created_at else time.time()),
+                        'last_seen': session_data.get('last_seen', db_session_obj.last_seen.timestamp() if db_session_obj.last_seen else time.time()),
+                        'commands_sent': session_data.get('commands_sent', 0),
+                        'commands_executed': session_data.get('commands_executed', 0),
+                        'active': session_data.get('active', True)
+                    }
+                else:
+                    # Load standard session
+                    # Safely parse JSON, handling empty or invalid strings
+                    session_data_str = (db_session_obj.session_data or '').strip()
+                    
+                    try:
+                        session_data = json.loads(session_data_str) if session_data_str else {}
+                    except (json.JSONDecodeError, ValueError):
+                        session_data = {}
+                    
+                    # Get host - should be automatically decrypted by EncryptedString
+                    host = db_session_obj.target_host or ''
+                    
+                    # If host looks encrypted (base64-like), try to decrypt manually
+                    if host and (host.startswith('Z0FBQUFBQ') or len(host) > 50):
+                        try:
+                            if self.db_manager and hasattr(self.db_manager, 'encryption_manager'):
+                                encryption_manager = self.db_manager.encryption_manager
+                                if encryption_manager and encryption_manager._is_initialized:
+                                    host = encryption_manager.decrypt_data(host)
+                        except Exception:
+                            # If decryption fails, keep the encrypted value
+                            # This might be an old session with different encryption key
+                            pass
+                    
+                    self.sessions[session_id] = SessionData(
+                        id=session_id,
+                        host=host,
+                        port=db_session_obj.target_port or 0,
+                        session_type=db_session_obj.session_type,
+                        data=session_data
+                    )
+                        
+        except Exception as e:
+            print_error(f"Error loading sessions from database: {e}")
+    
+    def create_session(self, host: str, port: int, session_type: str, data=None) -> str:
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = SessionData(
+            id=session_id,
+            host=host,
+            port=port,
+            session_type=session_type,
+            data=data or {}
+        )
+        self._session_metadata[session_id] = {
+            "created_at": time.time(),
+            "category": "standard"
+        }
+        
+        # Sync to database
+        self._sync_session_to_db(session_id, self.sessions[session_id])
+        
+        for callback in self.callbacks:
+            try:
+                callback('session_created', session_id, self.sessions[session_id])
+            except Exception as e:
+                print(f"Error in session callback: {e}")
+        
+        # Play sound notification if enabled
+        self._play_session_sound()
+        
+        return session_id
+    
+    def update_session_data(self, session_id: str, updates: Dict[str, Any]) -> bool:
+        """Merge updates into an in-memory session and sync to the database."""
+        session = self.sessions.get(session_id)
+        if not session:
+            return False
+        if updates:
+            session.data = {**(session.data or {}), **updates}
+            if "address" in updates and isinstance(updates["address"], (list, tuple)) and len(updates["address"]) >= 2:
+                session.host = str(updates["address"][0])
+                try:
+                    session.port = int(updates["address"][1])
+                except (TypeError, ValueError):
+                    pass
+        self._sync_session_to_db(session_id, session)
+        for callback in self.callbacks:
+            try:
+                callback("session_updated", session_id, session)
+            except Exception as e:
+                print_error(f"Error in session callback: {e}")
+        return True
+
+    def find_disconnected_session_by_identity(
+        self,
+        listener_id: str,
+        *,
+        implant_id: str = "",
+        client_id: str = "",
+    ) -> Optional[str]:
+        identity = str(implant_id or client_id or "").strip()
+        if not identity:
+            return None
+        for session_id, session in self.sessions.items():
+            data = session.data or {}
+            if data.get("listener_id") != listener_id:
+                continue
+            if data.get("transport_state") != "disconnected":
+                continue
+            existing = str(data.get("implant_id") or data.get("client_id") or "").strip()
+            if existing == identity:
+                return session_id
+        return None
+    
+    def _play_session_sound(self):
+        """Play sound notification when a session is created"""
+        try:
+            # Check if sound is enabled in framework
+            if self.framework and hasattr(self.framework, 'sound_enabled') and self.framework.sound_enabled:
+                try:
+                    from nava import play
+                    sound_file = sound_notify_path()
+                    if sound_file:
+                        play(str(sound_file))
+                except ImportError:
+                    # nava not installed, silently skip
+                    pass
+                except Exception as e:
+                    # Error playing sound, silently skip
+                    pass
+        except Exception:
+            # Framework not available or error, silently skip
+            pass
+    
+    def register_browser_session(self, session_id, info):
+        info = info or {}
+        now = time.time()
+        
+        # Check if this is a new session
+        is_new_session = session_id not in self.browser_sessions
+        
+        if session_id in self.browser_sessions:
+            self.browser_sessions[session_id]['info'] = info
+            self.browser_sessions[session_id]['last_seen'] = now
+        else:
+            self.browser_sessions[session_id] = {
+                'id': session_id,
+                'type': 'browser',
+                'info': info,
+                'first_seen': now,
+                'last_seen': now,
+                'commands_sent': 0,
+                'commands_executed': info.get('commands_executed', 0),
+                'active': True
+            }
+            self._session_metadata[session_id] = {
+                "created_at": now,
+                "category": "browser"
+            }
+        
+        # Sync to database
+        self._sync_browser_session_to_db(session_id, self.browser_sessions[session_id])
+        
+        # Play sound notification if enabled (only for new sessions)
+        if is_new_session:
+            self._play_session_sound()
+        
+        return self.browser_sessions[session_id]
+    
+    def update_browser_session(self, victim_id: str, info: Dict[str, Any]) -> bool:
+        if victim_id not in self.browser_sessions:
+            return False
+        
+        now = time.time()
+        session = self.browser_sessions[victim_id]
+        session['last_seen'] = now
+        
+        if not info:
+            info = {}
+        
+        commands_executed = info.pop('commands_executed', None)
+        if commands_executed is not None:
+            session['commands_executed'] = commands_executed
+        
+        commands_sent = info.pop('commands_sent', None)
+        if commands_sent is not None:
+            session['commands_sent'] = commands_sent
+        
+        # Update nested info dictionary with remaining values
+        session['info'].update(info)
+        
+        # Sync to database
+        self._sync_browser_session_to_db(victim_id, session)
+        
+        for callback in self.callbacks:
+            try:
+                callback('browser_session_updated', victim_id, session)
+            except Exception as e:
+                print_error(f"Error in session callback: {e}")
+        
+        return True
+    
+    def handle_commands_sent(self, victim_id: str, commands: List[Dict[str, Any]]) -> None:
+        if victim_id in self.browser_sessions:
+            session = self.browser_sessions[victim_id]
+            session['commands_sent'] += len(commands)
+            
+            # Sync to database
+            self._sync_browser_session_to_db(victim_id, session)
+            
+            # Notify the callbacks
+            for callback in self.callbacks:
+                try:
+                    callback('commands_sent', victim_id, commands)
+                except Exception as e:
+                    print_error(f"Error in commands_sent callback: {e}")
+    
+    def get_session(self, session_id: str) -> Optional[SessionData]:
+        return self.sessions.get(session_id)
+    
+    def get_browser_session(self, session_id):
+        
+        if session_id in self.browser_sessions:
+            return self.browser_sessions[session_id]
+        
+        return None
+    
+    def get_sessions(self) -> List[SessionData]:
+        return list(self.sessions.values())
+    
+    def get_browser_sessions(self) -> List[Dict[str, Any]]:
+        return list(self.browser_sessions.values())
+    
+    def get_all_sessions(self) -> Dict[str, Any]:
+        all_sessions = {
+            'standard': self.get_sessions(),
+            'browser': self.get_browser_sessions()
+        }
+        return all_sessions
+    
+    def cleanup_old_sessions(self, days: int = 7) -> int:
+        """Clean up old sessions from database (mark as inactive)"""
+        if not self.db_manager:
+            return 0
+        
+        try:
+            from datetime import datetime, timedelta
+            db_session = self._get_db_session()
+            if not db_session:
+                return 0
+            
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+
+            workspace_id = self._get_workspace_id()
+            query = db_session.query(DBSession).filter(
+                DBSession.is_active == True,
+                DBSession.created_at < cutoff_date
+            )
+            if workspace_id is not None:
+                query = query.filter(DBSession.workspace_id == workspace_id)
+
+            # Mark old sessions as inactive
+            old_sessions = query.all()
+            
+            count = 0
+            for session in old_sessions:
+                session.is_active = False
+                count += 1
+            
+            if count > 0:
+                db_session.commit()
+            
+            return count
+        except Exception as e:
+            print_error(f"Error cleaning up old sessions: {e}")
+            return 0
+    
+    def _remove_session_from_db(self, session_id: str) -> bool:
+        """Remove a session from the database"""
+        if not self.db_manager:
+            return False
+        
+        try:
+            db_session = self._get_db_session()
+            if not db_session:
+                return False
+                
+            db_session_obj = db_session.query(DBSession).filter_by(session_id=session_id).first()
+            if db_session_obj:
+                db_session_obj.is_active = False
+                db_session.commit()
+                return True
+        except Exception as e:
+            print_error(f"Error removing session {session_id} from database: {e}")
+        return False
+    
+    def remove_session(self, session_id: str) -> bool:
+        if session_id in self.sessions:
+            session = self.sessions.pop(session_id)
+            
+            # Remove from database
+            self._remove_session_from_db(session_id)
+            
+            # Remove metadata
+            self._session_metadata.pop(session_id, None)
+            
+            # Notify the callbacks
+            for callback in self.callbacks:
+                try:
+                    callback('session_removed', session_id, session)
+                except Exception as e:
+                    print_error(f"Error in session callback: {e}")
+            
+            return True
+        return False
+    
+    def remove_browser_session(self, victim_id: str) -> bool:
+        if victim_id in self.browser_sessions:
+            session = self.browser_sessions.pop(victim_id)
+            
+            # Remove from database
+            self._remove_session_from_db(victim_id)
+            
+            # Remove metadata
+            self._session_metadata.pop(victim_id, None)
+            
+            for callback in self.callbacks:
+                try:
+                    callback('browser_session_removed', victim_id, session)
+                except Exception as e:
+                    print_error(f"Error in session callback: {e}")
+            
+            return True
+        return False
+    
+    def add_callback(self, callback):
+        self.callbacks.append(callback)
+    
+    def remove_callback(self, callback):
+        if callback in self.callbacks:
+            self.callbacks.remove(callback) 

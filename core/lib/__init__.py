@@ -1,0 +1,69 @@
+# Import here to avoid circular imports
+def get_remote_connection():
+    from core.lib.remote_connection import RemoteConnection
+    return RemoteConnection
+
+def get_connection_manager():
+    from core.lib.connection_manager import ConnectionManager
+    return ConnectionManager
+
+def get_tunnel_proxy_manager():
+    from core.lib.tunnel_proxy import TunnelProxyManager
+    return TunnelProxyManager
+
+def remote(host: str, port: int, protocol: str = 'tcp', **kwargs):
+    """
+    Create a remote connection to a target host
+    
+    Args:
+        host: Target hostname or IP address
+        port: Target port number
+        protocol: Connection protocol ('tcp', 'ssh', 'http', 'https', 'rpc', 'api')
+        **kwargs: Additional connection parameters (username, password, api_key, timeout)
+    """
+    RemoteConnection = get_remote_connection()
+    return RemoteConnection(host, port, protocol, **kwargs)
+
+def get_current_remote():
+    ConnectionManager = get_connection_manager()
+    return ConnectionManager.get_current_remote()
+
+def send_command(command: str):
+    RemoteConnection = get_remote_connection()
+    return RemoteConnection.send_command(command)
+
+def disassemble(data: bytes, start_address: int = 0):
+    from core.lib.disassembler import x86Disassembler
+    return x86Disassembler.disassemble(data, start_address)
+
+def analyze_elf(path: str):
+    from core.lib.elf_analyzer import ELFAnalyzer
+    analyzer = ELFAnalyzer(path)
+    return analyzer.get_binary_info()
+
+def analyze_pe(path: str):
+    from core.lib.pe_analyzer import PEAnalyzer
+    return PEAnalyzer.analyze(path)
+
+def compile_python_to_exe(script_code: str, output_path: str,
+                          target_platform: str = 'windows', target_arch: str = 'x64',
+                          python_binary: str = 'python', use_compression: bool = False):
+    """
+    Compile Python script to executable (Zig). Requires Zig in PATH or
+    core/lib/compiler/zig_executable/
+    """
+    from core.lib.py_compiler.py2exe_zig import compile_python_to_exe as _do_compile
+    return _do_compile(script_code=script_code, output_path=output_path,
+                       target_platform=target_platform, target_arch=target_arch,
+                       python_binary=python_binary, use_compression=use_compression)
+
+__all__ = ['get_remote_connection', 
+            'get_connection_manager', 
+            'get_tunnel_proxy_manager',
+            'remote',
+            'get_current_remote',
+            'send_command',
+            'disassemble',
+            'analyze_elf',
+            'analyze_pe',
+            'compile_python_to_exe']

@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+from enum import Enum
+
+class Handler(Enum):
+    """Handler types for listeners"""
+    BIND = "bind"
+    REVERSE = "reverse"
+
+class SessionType(Enum):
+    """Session types"""
+    SHELL = "shell"
+    METERPRETER = "meterpreter"
+    HTTP = "http"
+    HTTPS = "https"
+    SSH = "ssh"
+    WINRM = "winrm"
+    DISCORD = "discord"
+    WEBSOCKET = "websocket"
+    WEBSHELL = "webshell"
+    PHP = "php"
+    PYTHON = "python"
+    MYSQL = "mysql"
+    POSTGRESQL = "postgresql"
+    REDIS = "redis"
+    LDAP = "ldap"
+    MONGODB = "mongodb"
+    ELASTICSEARCH = "elasticsearch"
+    MSSQL = "mssql"
+    FTP = "ftp"
+    AWS = "aws"
+    CANBUS = "canbus"
+    DOIP = "doip"
+    UART = "uart"
+    BROWSER = "browser"
+    ANDROID = "android"
+    MQTT = "mqtt"
+    BLE = "ble"
+    POLLING = "polling"
+    AZURE_RUN_COMMAND = "azure_run_command"
+    GCP_COMPUTE_SSH = "gcp_compute_ssh"
+    GCP_API = "gcp_api"
+    KUBERNETES = "kubernetes"
+    COAP = "coap"
+    DNS = "dns"
+    EMAIL = "email"
+    SMB = "smb"
+    S7COMM = "s7comm"
+    MODBUS = "modbus"
+    OPCUA = "opcua"
+    QUIC = "quic"
+
+class ServiceType(Enum):
+    """Service types"""
+    TCP = "tcp"
+    UDP = "udp"
+
+class ServiceState(Enum):
+    """Service states"""
+    OPEN = "open"
+    CLOSED = "closed"
+    FILTERED = "filtered"
+    UNKNOWN = "unknown"
+
+class RiskLevel(Enum):
+    """Risk levels"""   
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    UNKNOWN = "unknown"
+
+class Protocol(Enum):
+    """Protocols"""
+    HTTP = "http"
+    HTTPS = "https"
+    FTP = "ftp"
+    SSH = "ssh"
+    SMB = "smb"
+    TCP = "tcp"
+    UDP = "udp"
+    ICMP = "icmp"
+    OTHER = "other"
+
+class Platform(Enum):
+    """Platform types"""
+    LINUX = "linux"
+    WINDOWS = "windows"
+    MACOS = "macos"
+    UNIX = "unix"
+    ANDROID = "android"
+    IOS = "ios"
+    JAVASCRIPT = "javascript"
+    PHP = "php"
+    PYTHON = "python"
+    OTHER = "other"
+    MULTI = "multi"
+    ALL = "all"
+
+class Browser(Enum):
+    """Browser types"""
+    CHROME = "chrome"
+    FIREFOX = "firefox"
+    EDGE = "edge"
+    SAFARI = "safari"
+    OPERA = "opera"
+    OTHER = "other"
+    ALL = "all"
+
+class PayloadCategory(Enum):
+    """Payload categories"""
+    STAGER = "stager"
+    STAGE = "stage"
+    SINGLE = "single"
+    ENCODER = "encoder"
+    CMD = "cmd"
+    NOP = "nop"
+
+class Arch(Enum):
+    """Architecture types"""
+    PYTHON = {"name": "Python", "value": "python"}
+    PHP = {"name": "PHP", "value": "php"}
+    PERL = {"name": "Perl", "value": "perl"}
+    X86 = {"name": "x86", "value": "x86"}
+    X64 = {"name": "x64", "value": "x64"}
+    ARM = {"name": "ARM", "value": "arm"}
+    ARM64 = {"name": "ARM64", "value": "arm64"}
+    MIPS = {"name": "MIPS", "value": "mips"}
+    MIPS64 = {"name": "MIPS64", "value": "mips64"}
+    POWERPC = {"name": "PowerPC", "value": "powerpc"}
+    SPARC = {"name": "SPARC", "value": "sparc"}
+    RISC_V = {"name": "RISC-V", "value": "risc-v"}
+    WASM32 = {"name": "WASM32", "value": "wasm32"}
+    OTHER = {"name": "Other", "value": "other"}
+
+class Type(Enum):
+
+    CMD = "cmd"
+    PHP = "php"
+    PYTHON = "python"
+    LINUX = "linux"
+    WINDOWS = "windows"
+    MACOS = "macos"
+    ANDROID = "android"
+    IOS = "ios"
+
+class PayloadType(Enum):
+    """Payload types"""
+    CMD = "cmd"
+    PHP = "php"
+    PYTHON = "python"
+    LINUX = "linux"
+    WINDOWS = "windows"
+    MACOS = "macos"
+    ANDROID = "android"
+    IOS = "ios"

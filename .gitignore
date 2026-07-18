@@ -1,0 +1,99 @@
+# KittySploit Framework - Git Ignore
+# ===================================
+
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+venv/*
+.venv/*
+docs/*
+!docs/ROADMAP-AGENT-100X.md
+artifacts/*
+
+# Python package files
+*.egg-info/
+dist/
+build/
+
+# Database files
+/database/
+*.db
+*.sqlite
+config.toml
+/reports/
+
+# Output files
+output/
+
+# Cache files
+cache/
+.cache/
+
+# Test files
+test_*.py
+*_test.py
+!tests/test_json_schemas.py
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# Backup files
+*.bak
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Zig executable
+core/lib/compiler/zig_executable/
+
+# Installer files
+start_kittysploit.bat
+uninstall.bat
+start_kittysploit.sh
+uninstall.sh
+KittySploit.lnk
+
+# Zig cache
+.zig_cache/
+config/trust_store.json
+
+saved_sessions.json
+
+module_test_report.txt
+
+extensions/
+
+test/
+
+codeline.txt
+
+python-3.13.5-embed-amd64.zip
+
+todo/*
+kitty_marketplace/*
+
+launch_*.py
+modules/browser_exploits/multi/chrome_font_feature_uaf.py
+
+apps/*
+!apps/kittysploit-ai/
+!apps/kittysploit-ai/**
+!apps/kittyCluster/
+!apps/kittyCluster/**
+apps/kittyCluster/**/__pycache__/
+apps/kittyCluster/**/*.py[cod]
+artifacts/*
+TODO.md
+
+tests/*
+docs/ROADMAP-AGENT-100X.md
