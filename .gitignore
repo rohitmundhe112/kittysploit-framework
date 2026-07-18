@@ -97,3 +97,8 @@ TODO.md
 
 tests/*
 docs/ROADMAP-AGENT-100X.md
+venv/
+__pycache__/
+*.pyc
+.env
+.env.*
